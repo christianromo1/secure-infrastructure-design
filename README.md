@@ -113,7 +113,6 @@ Network security architecture, perimeter and internal firewall design, DMZ desig
 
 **Administrators need their own path in.** A bastion host with key-based authentication and MFA gives them one controlled way to reach the servers, meaning no management port is exposed to the internet or to the general user VLANs.
 
-`[closing line: something honest about what was hardest, or what you would do differently]`
 
 ## Repo Contents
 
