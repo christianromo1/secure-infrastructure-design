@@ -18,8 +18,6 @@ Several of My-Co's core services (file storage, email, and databases) were runni
 ![My proposed My-Co infrastructure](images/myco-proposed-diagram.png)
 *My proposed logical design. The editable source is [`myco-proposed.drawio`](myco-proposed.drawio) and a PDF copy is [`myco-proposed-diagram.pdf`](myco-proposed-diagram.pdf).*
 
-> The diagram is exactly as I submitted it, so a few labels differ from the corrected write-up below: the DMZ is labeled `79.12.40.0/27` (the write-up uses `79.12.40.32/27`, since the original range overlapped the ISP link), the Software Development box says 67 hosts (the assignment lists 109, which is 67 Linux, 21 Windows, and 21 Mac), and the bastion host is drawn outside the DMZ box even though the write-up places it in the DMZ.
-
 ### How I approached it
 
 Before I drew anything, I wrote down the layers I wanted: a perimeter firewall at the edge, a segmentation firewall inside, a DMZ for anything public, a bastion host for administrators, an off-network backup server, and blackhole routing with uRPF on the edge router. My class notes also reminded me that only one perimeter firewall was needed, since there is already plenty of fiber connecting the three buildings, meaning the firewall could sit in the Building 2 datacenter and the internal networks could be distributed to the other buildings over the existing cabling.
@@ -28,13 +26,7 @@ I also kept in mind that putting too many barriers inside a network hurts collab
 
 ### Which risks each solution covers
 
-| My solution | Assignment risks addressed |
-|---|---|
-| 1. Perimeter firewalls, DMZ, and an HTTPS download portal | Risk 1 (no perimeter protection), Risk 6 (web server resilience, through the HA pair), and Risk 9 (outdated FTP) |
-| 2. Internal segmentation | Risk 2 (no internal segmentation) |
-| 3. Backups | Risk 7 (backup tapes stored on-site) |
-| 4. Secure remote access | Risk 8 (no secure remote access) |
-| 5. EOL client systems | Risk 10 (EOL client systems) |
+The perimeter firewall, DMZ, and HTTPS download portal (Solution 1) cover Risk 1 (no perimeter protection), Risk 6 (web server resilience, through the HA pair), and Risk 9 (the outdated FTP service). Internal segmentation (Solution 2) covers Risk 2, the backup redesign (Solution 3) covers Risk 7, secure remote access (Solution 4) covers Risk 8, and the EOL client refresh (Solution 5) covers Risk 10.
 
 ---
 
@@ -44,7 +36,7 @@ In the current design, there's only a single edge router that connects all serve
 
 My solution is to deploy a perimeter firewall (Palo Alto PA-3400) in Building 2's datacenter, between the edge router and all internal networks. The edge router keeps its ISP point-to-point (79.12.40.0/30) and is configured with uRPF in strict mode to drop spoofed source addresses, ingress ACLs to reject RFC1918-sourced and internally sourced inbound traffic, and blackhole routing for known malicious IP ranges.
 
-The perimeter firewall creates a DMZ on a small public subnet (79.12.40.32/27) to hold public-facing services such as the web server (now in an HA pair with HTTPS and HSTS), an HTTPS download portal that replaces the insecure FTP server (addressing Risk 9), and an inbound mail gateway. All other servers (NAS, SQL, Exchange, internal apps) are moved behind the perimeter firewall onto RFC1918 private addresses (10.10.x.x) and only reach the internet via NAT/PAT for outbound patching and updates. The perimeter firewall also terminates the VPN service for remote employees, and visitors from Building 3 are placed on a separate public-facing firewall leg with PAT to the internet and no access to internal resources.
+The perimeter firewall creates a DMZ on a small public subnet (79.12.40.32/27) to hold public-facing services such as the web server (now in an HA pair with HTTPS and HSTS), an HTTPS download portal that replaces the insecure FTP server (addressing Risk 9), an inbound mail gateway, and the bastion host for administrators (see Solution 4). All other servers (NAS, SQL, Exchange, internal apps) are moved behind the perimeter firewall onto RFC1918 private addresses (10.10.x.x) and only reach the internet via NAT/PAT for outbound patching and updates. The perimeter firewall also terminates the VPN service for remote employees, and visitors from Building 3 are placed on a separate public-facing firewall leg with PAT to the internet and no access to internal resources.
 
 This major architectural change solves the perimeter protection gap, creates the DMZ needed to separate public-facing from internal servers, and retires the FTP service by replacing it with an HTTPS portal.
 
@@ -54,13 +46,7 @@ In the current design, all servers and desktops share the same flat network. The
 
 My solution is to deploy an inner segmentation firewall behind a VLAN-aware switch-router (Cisco Catalyst 9500/9300), using 802.1q trunks and RACLs per VLAN to divide the network by role and collaboration needs. The inner firewall inspects east-west traffic and stops lateral movement between segments.
 
-| VLAN | Who is on it | Why |
-|---|---|---|
-| Engineering | Software Development, Research and Development, and Quality Assurance | They share a development-to-testing workflow |
-| Sales/Support | Product Sales and Customer Support | Co-located in Building 3 with similar customer-facing needs |
-| Financial | Financial Services | Sensitivity of its data |
-| Admin | Network Administration and System Administration | Privileged access, with all server access going through the bastion host |
-| Quarantine | EOL machines that can't be immediately replaced | No internet access and only scoped application access through the inner firewall |
+Software Development, Research and Development, and Quality Assurance are grouped on an Engineering VLAN since they share a development-to-testing workflow. Product Sales and Customer Support share a VLAN, as they are co-located in Building 3 with similar customer-facing needs. Financial Services gets its own VLAN given the sensitivity of its data. Network and System Administration share a privileged Admin VLAN, with all server access going through the bastion host. A Quarantine VLAN holds any EOL machines that can't be immediately replaced, with no internet access and only scoped application access through the inner firewall.
 
 Internal servers (NAS, SQL, Exchange) are placed on their own server VLAN on RFC1918 addressing. Host-based firewalls are enabled on every desktop to protect against lateral movement at the host level. VLANs are distributed to Buildings 1 and 3 over the existing 72-strand single-mode fiber runs using 802.1q trunks, so no new inter-building cabling is needed.
 
@@ -84,16 +70,7 @@ For administrators who need access to server management interfaces and network e
 
 In the current design, the desktop environment includes WinXP machines in Financial and Customer Support, Win7 machines in Sales and Customer Support, CentOS 6 and Ubuntu 16.04 in Software Development, and Solaris in System Administration. None of these receive security patches, many have known remote-code-execution vulnerabilities, and all of them sit on the same flat network as everything else.
 
-My solution is to upgrade hardware and operating systems across all of these groups.
-
-| Group | Current | Replacement |
-|---|---|---|
-| Financial Services (8 machines) | WinXP | New hardware running Windows 11 Pro |
-| Customer Support (14 machines) | WinXP/Win7 | New hardware running Windows 11 Pro |
-| Product Sales (27 machines) | Win7 | Windows 11 Pro |
-| Software Development | CentOS 6 and Ubuntu 16.04 | Rocky 9 or Ubuntu 24.04 LTS |
-| Research and Development | CentOS 7 | Rocky 9 |
-| System Administration | Solaris | Debian 12 or Ubuntu 24.04 LTS |
+My solution is to upgrade hardware and operating systems across all of these groups. The eight Financial Services WinXP machines and the fourteen Customer Support WinXP/Win7 machines are replaced with new hardware running Windows 11 Pro, and the twenty-seven Win7 Sales machines follow the same path. On the Linux side, Software Development's CentOS 6 and Ubuntu 16.04 hosts are migrated to Rocky 9 or Ubuntu 24.04 LTS, R&D's CentOS 7 machines move to Rocky 9, and the System Administration Solaris workstations are replaced with Debian 12 or Ubuntu 24.04 LTS.
 
 Any machine that cannot be immediately replaced is moved to the Quarantine VLAN established in Solution 2, which has no internet access and only allows traffic to specific application servers through the inner firewall. Host-based firewalls are enabled on all refreshed desktops to block unnecessary inbound connections and protect against lateral movement at the host level. Machines stay in quarantine until they are replaced or their workload is migrated.
 
@@ -112,7 +89,6 @@ Network security architecture, perimeter and internal firewall design, DMZ desig
 **Backups only help if the attacker cannot reach them.** Moving the backup server to an isolated network and keeping an immutable cloud copy means ransomware that gets in still cannot take the backups with it.
 
 **Administrators need their own path in.** A bastion host with key-based authentication and MFA gives them one controlled way to reach the servers, meaning no management port is exposed to the internet or to the general user VLANs.
-
 
 ## Repo Contents
 
